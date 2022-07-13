@@ -1,0 +1,68 @@
+package mirea.loginservise.Controller;
+
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.JWTVerifier;
+import com.auth0.jwt.algorithms.Algorithm;
+import com.auth0.jwt.interfaces.DecodedJWT;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import mirea.loginservise.Models.Role;
+import mirea.loginservise.Models.User;
+import mirea.loginservise.Service.UserService;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.io.IOException;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import static org.springframework.http.HttpHeaders.AUTHORIZATION;
+import static org.springframework.http.HttpStatus.FORBIDDEN;
+import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
+
+@RestController
+@RequestMapping("/api/token")
+@RequiredArgsConstructor
+public class TokenController {
+    private final UserService userService;
+    @GetMapping("/refresh")
+    public void refreshToken (HttpServletRequest request, HttpServletResponse response) throws IOException {
+        String authorizationHeader = request.getHeader(AUTHORIZATION);
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            try {
+                assert authorizationHeader != null;
+                String refreshToken = authorizationHeader.substring(("Bearer ".length()));
+                Algorithm algorithm = Algorithm.HMAC256("secret".getBytes());
+                JWTVerifier verifier = JWT.require(algorithm).build();
+                DecodedJWT decodedJWT = verifier.verify(refreshToken);
+                String username = decodedJWT.getSubject();
+                User user = userService.getUserByUserEmail(username);
+                String accessToken = JWT.create()
+                        .withSubject(user.getUserName())
+                        .withExpiresAt(new Date(System.currentTimeMillis() + 10 * 60 * 1000))
+                        .withIssuer(request.getRequestURL().toString())
+                        .withClaim("role", user.getUserRoles().stream().map(Role::getRoleNane).collect(Collectors.toList()))
+                        .sign(algorithm);
+                Map<String, String> tokens = new HashMap<>();
+                tokens.put("accessToken", accessToken);
+                tokens.put("refreshToken", refreshToken);
+                response.setContentType(APPLICATION_JSON_VALUE);
+                new ObjectMapper().writeValue(response.getWriter(), tokens);
+            } catch (Exception e) {
+                response.setHeader("error", e.getMessage());
+                response.setStatus(FORBIDDEN.value());
+                Map<String, String> error = new HashMap<>();
+                error.put("error_message", e.getMessage());
+                response.setContentType(APPLICATION_JSON_VALUE);
+                new ObjectMapper().writeValue(response.getOutputStream(), error);
+            }
+        } else {
+            throw new RuntimeException("Refresh token is missing");
+        }
+    }
+}
